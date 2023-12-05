@@ -1,6 +1,8 @@
 use dioxus::core::{Component, ElementId, Mutation, TemplateNode, VirtualDom};
+use muda::{IsMenuItem, MenuItem, MenuItemBuilder};
 use slotmap::{DefaultKey, SlotMap};
 use std::{collections::HashMap, fmt, mem};
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 #[derive(Debug)]
 pub struct MenuTemplate {
@@ -32,15 +34,19 @@ pub struct Menu {
     nodes: SlotMap<DefaultKey, MenuTemplateNode>,
     templates: HashMap<String, MenuTemplate>,
     elements: HashMap<ElementId, MenuElement>,
+    tray_icon: Option<TrayIcon>,
+    icon: Icon
 }
 
 impl Menu {
-    pub fn new(app: Component) -> Self {
+    pub fn new(icon: Icon, app: Component) -> Self {
         Self {
             vdom: VirtualDom::new(app),
             nodes: SlotMap::new(),
             templates: HashMap::new(),
             elements: HashMap::new(),
+            tray_icon: None,
+            icon
         }
     }
 
@@ -128,6 +134,24 @@ impl Menu {
                 _ => {}
             }
         }
+
+        let menu = muda::Menu::new();
+        // TODO id 0
+        let root = &self.elements[&ElementId(1)];
+        match root {
+            MenuElement::Item { text } => {
+                let item = MenuItemBuilder::new().text(text).build();
+                menu.append(&item).unwrap();
+            }
+        }
+
+        self.tray_icon = Some(
+            TrayIconBuilder::new()
+                .with_menu(Box::new(menu))
+                .with_icon(self.icon.clone())
+                .build()
+                .unwrap(),
+        );
     }
 }
 

@@ -1,0 +1,13 @@
+[package]
+name = "dioxus-menu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dioxus = { git = "https://github.com/dioxuslabs/dioxus" }
+dioxus-desktop = { git = "https://github.com/dioxuslabs/dioxus" }
+dioxus-signals = { git = "https://github.com/dioxuslabs/dioxus" }
+muda = "0.9"
+tray-icon = "0.9"
+image = "0.24.7"
+winit = "0.29.4"

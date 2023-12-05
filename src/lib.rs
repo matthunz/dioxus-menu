@@ -1,7 +1,7 @@
 use dioxus::core::{Component, ElementId, Mutation, TemplateNode, VirtualDom};
-use muda::{IsMenuItem, MenuItem, MenuItemBuilder};
+use muda::MenuItemBuilder;
 use slotmap::{DefaultKey, SlotMap};
-use std::{collections::HashMap, fmt, mem};
+use std::{collections::HashMap, fmt};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 #[derive(Debug)]
@@ -27,6 +27,7 @@ pub enum MenuTemplateNode {
 #[derive(Debug)]
 pub enum MenuElement {
     Item { text: String },
+    Root { children: Vec<ElementId> },
 }
 
 pub struct Menu {
@@ -35,18 +36,26 @@ pub struct Menu {
     templates: HashMap<String, MenuTemplate>,
     elements: HashMap<ElementId, MenuElement>,
     tray_icon: Option<TrayIcon>,
-    icon: Icon
+    icon: Icon,
 }
 
 impl Menu {
     pub fn new(icon: Icon, app: Component) -> Self {
+        let mut elements = HashMap::new();
+        elements.insert(
+            ElementId(0),
+            MenuElement::Root {
+                children: Vec::new(),
+            },
+        );
+
         Self {
             vdom: VirtualDom::new(app),
             nodes: SlotMap::new(),
             templates: HashMap::new(),
-            elements: HashMap::new(),
+            elements,
             tray_icon: None,
-            icon
+            icon,
         }
     }
 
@@ -55,56 +64,57 @@ impl Menu {
         dbg!(&mutations);
 
         for template in &mutations.templates {
-            enum Op<'a> {
-                PushChild(TemplateNode<'a>),
-                PopParent,
-            }
-            let mut stack: Vec<_> = template
-                .roots
-                .iter()
-                .rev()
-                .copied()
-                .map(Op::PushChild)
-                .collect();
-            let mut parents = Vec::new();
-            let mut child_stack = Vec::new();
-            while let Some(op) = stack.pop() {
-                match op {
-                    Op::PushChild(node) => match node {
-                        TemplateNode::Text { text } => {
-                            let key = self.nodes.insert(MenuTemplateNode::Text(text.to_owned()));
-                            child_stack.push(key);
+            let mut stack: Vec<_> = template.roots.iter().map(|node| (None, *node)).collect();
+
+            let mut roots = Vec::new();
+            while let Some((parent, node)) = stack.pop() {
+                match node {
+                    TemplateNode::Text { text } => {
+                        let key = self.nodes.insert(MenuTemplateNode::Text(text.to_owned()));
+                        if let Some(parent) = parent {
+                            if let MenuTemplateNode::Element { kind: _, children } =
+                                &mut self.nodes[parent]
+                            {
+                                children.push(key);
+                            }
+                        } else {
+                            roots.push(key);
                         }
-                        TemplateNode::Element {
-                            tag: _,
-                            namespace: _,
-                            attrs: _,
-                            children,
-                        } => {
-                            parents.push(ElementKind::Item);
-                            stack.push(Op::PopParent);
-                            stack.extend(children.iter().copied().map(Op::PushChild));
-                        }
-                        _ => todo!(),
-                    },
-                    Op::PopParent => {
-                        let kind = parents.pop().unwrap();
-                        let key = self.nodes.insert(MenuTemplateNode::Element {
-                            kind,
-                            children: mem::take(&mut child_stack),
-                        });
-                        child_stack.push(key);
                     }
+                    TemplateNode::Element {
+                        tag: _,
+                        namespace: _,
+                        attrs: _,
+                        children,
+                    } => {
+                        let key = self.nodes.insert(MenuTemplateNode::Element {
+                            kind: ElementKind::Item,
+                            children: Vec::new(),
+                        });
+                        stack.extend(children.iter().map(|node| (Some(key), *node)));
+
+                        if let Some(parent) = parent {
+                            if let MenuTemplateNode::Element { kind: _, children } =
+                                &mut self.nodes[parent]
+                            {
+                                children.push(key);
+                            }
+                        } else {
+                            roots.push(key);
+                        }
+                    }
+                    _ => todo!(),
                 }
             }
 
             let template = MenuTemplate {
                 name: template.name.to_owned(),
-                roots: child_stack,
+                roots,
             };
             self.templates.insert(template.name.clone(), template);
         }
 
+        let mut stack = Vec::new();
         for mutation in mutations.edits {
             match mutation {
                 Mutation::LoadTemplate { name, index, id } => {
@@ -128,6 +138,18 @@ impl Menu {
                             }
 
                             self.elements.insert(id, MenuElement::Item { text });
+                            stack.push(id);
+                        }
+                    }
+                }
+                Mutation::AppendChildren { id, m } => {
+                    for _ in 0..m {
+                        let child_id = stack.pop().unwrap();
+                        match self.elements.get_mut(&id).unwrap() {
+                            MenuElement::Item { text: _ } => todo!(),
+                            MenuElement::Root { children } => {
+                                children.push(child_id);
+                            }
                         }
                     }
                 }
@@ -136,17 +158,26 @@ impl Menu {
         }
 
         let menu = muda::Menu::new();
-        // TODO id 0
-        let root = &self.elements[&ElementId(1)];
+        let root = &self.elements[&ElementId(0)];
         match root {
-            MenuElement::Item { text } => {
-                let item = MenuItemBuilder::new().text(text).build();
-                menu.append(&item).unwrap();
+            MenuElement::Root { children } => {
+                for child_id in children {
+                    let child = &self.elements[child_id];
+                    match child {
+                        MenuElement::Item { text } => {
+                            let item = MenuItemBuilder::new().text(text).build();
+                            menu.append(&item).unwrap();
+                        }
+                        MenuElement::Root { children: _ } => todo!(),
+                    }
+                }
             }
+            _ => todo!(),
         }
 
         self.tray_icon = Some(
             TrayIconBuilder::new()
+                .with_tooltip("system-tray - tray icon library!")
                 .with_menu(Box::new(menu))
                 .with_icon(self.icon.clone())
                 .build()

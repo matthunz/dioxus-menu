@@ -5,6 +5,14 @@ use winit::event_loop::{ControlFlow, EventLoopBuilder};
 fn menu(cx: Scope) -> Element {
     cx.render(rsx! {
         item {
+            accelerator: "CMD+O",
+            "Open"
+        }
+        item {
+            accelerator: "CMD+S",
+            "Save"
+        }
+        item {
             accelerator: "CMD+Q",
             "Quit"
         }
@@ -20,13 +28,15 @@ fn main() {
 
     let tray_channel = TrayIconEvent::receiver();
 
-    event_loop.run(move |_event, event_loop| {
-        event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop
+        .run(move |_event, event_loop| {
+            event_loop.set_control_flow(ControlFlow::Poll);
 
-        if let Ok(event) = tray_channel.try_recv() {
-            println!("{event:?}");
-        }
-    }).unwrap();
+            if let Ok(event) = tray_channel.try_recv() {
+                println!("{event:?}");
+            }
+        })
+        .unwrap();
 
     drop(menu);
 }

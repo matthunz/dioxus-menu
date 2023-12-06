@@ -6,6 +6,7 @@ fn menu(cx: Scope) -> Element {
     cx.render(rsx! {
         item {
             accelerator: "CMD+O",
+            enabled: true,
             "Open"
         }
         item {

@@ -1,5 +1,5 @@
-use dioxus::core::{Component, ElementId, Mutation, TemplateNode, VirtualDom};
-use muda::MenuItemBuilder;
+use dioxus::core::{Component, ElementId, Mutation, TemplateNode, VirtualDom, BorrowedAttributeValue};
+use muda::{accelerator::Accelerator, MenuItemBuilder};
 use slotmap::{DefaultKey, SlotMap};
 use std::{collections::HashMap, fmt};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
@@ -12,7 +12,7 @@ pub struct MenuTemplate {
 
 #[derive(Clone, Copy, Debug)]
 pub enum ElementKind {
-    Item,
+    Item { accelerator: Option<Accelerator> },
 }
 
 #[derive(Debug)]
@@ -20,14 +20,21 @@ pub enum MenuTemplateNode {
     Text(String),
     Element {
         kind: ElementKind,
+        dynamic_attrs: Vec<usize>,
         children: Vec<DefaultKey>,
     },
 }
 
 #[derive(Debug)]
 pub enum MenuElement {
-    Item { text: String },
-    Root { children: Vec<ElementId> },
+    Item {
+        text: String,
+        accelerator: Option<Accelerator>,
+        enabled: bool
+    },
+    Root {
+        children: Vec<ElementId>,
+    },
 }
 
 pub struct Menu {
@@ -72,7 +79,7 @@ impl Menu {
                     TemplateNode::Text { text } => {
                         let key = self.nodes.insert(MenuTemplateNode::Text(text.to_owned()));
                         if let Some(parent) = parent {
-                            if let MenuTemplateNode::Element { kind: _, children } =
+                            if let MenuTemplateNode::Element { children, .. } =
                                 &mut self.nodes[parent]
                             {
                                 children.push(key);
@@ -84,17 +91,36 @@ impl Menu {
                     TemplateNode::Element {
                         tag: _,
                         namespace: _,
-                        attrs: _,
+                        attrs,
                         children,
                     } => {
+                        let mut accelerator = None;
+                        let mut dynamic_attrs = Vec::new();
+                        for attr in attrs {
+                            match attr {
+                                dioxus::core::TemplateAttribute::Static {
+                                    name,
+                                    value,
+                                    namespace: _,
+                                } => {
+                                    if *name == "accelerator" {
+                                        accelerator = Some(value.parse().unwrap());
+                                    }
+                                   
+                                }
+                                dioxus::core::TemplateAttribute::Dynamic { id } => dynamic_attrs.push(*id),
+                            }
+                        }
+
                         let key = self.nodes.insert(MenuTemplateNode::Element {
-                            kind: ElementKind::Item,
+                            kind: ElementKind::Item { accelerator },
                             children: Vec::new(),
+                            dynamic_attrs
                         });
                         stack.extend(children.iter().map(|node| (Some(key), *node)));
 
                         if let Some(parent) = parent {
-                            if let MenuTemplateNode::Element { kind: _, children } =
+                            if let MenuTemplateNode::Element {children, .. } =
                                 &mut self.nodes[parent]
                             {
                                 children.push(key);
@@ -123,7 +149,7 @@ impl Menu {
                     let root = &self.nodes[root_key];
                     match root {
                         MenuTemplateNode::Text(_text) => todo!(),
-                        MenuTemplateNode::Element { kind: _, children } => {
+                        MenuTemplateNode::Element { kind, children, .. } => {
                             let mut text = String::new();
 
                             for child_key in children {
@@ -131,14 +157,25 @@ impl Menu {
                                 match child {
                                     MenuTemplateNode::Text(s) => text.push_str(s),
                                     MenuTemplateNode::Element {
-                                        kind: _,
-                                        children: _,
+                                     
+                                        ..
                                     } => todo!(),
                                 }
                             }
 
-                            self.elements.insert(id, MenuElement::Item { text });
-                            stack.push(id);
+                            match kind {
+                                ElementKind::Item { accelerator } => {
+                                    self.elements.insert(
+                                        id,
+                                        MenuElement::Item {
+                                            text,
+                                            accelerator: accelerator.clone(),
+                                            enabled: false
+                                        },
+                                    );
+                                    stack.push(id);
+                                }
+                            }
                         }
                     }
                 }
@@ -146,11 +183,30 @@ impl Menu {
                     for _ in 0..m {
                         let child_id = stack.pop().unwrap();
                         match self.elements.get_mut(&id).unwrap() {
-                            MenuElement::Item { text: _ } => todo!(),
                             MenuElement::Root { children } => {
                                 children.push(child_id);
                             }
+                            _ => todo!(),
                         }
+                    }
+                }
+                Mutation::SetAttribute { name, value, id, ns } => {
+                    let element = self.elements.get_mut(&id).unwrap();
+                    if let MenuElement::Item { text, accelerator , enabled} = element {
+                        match name {
+                            "enabled" => {
+                                if let BorrowedAttributeValue::Bool(b) = value {
+                                    *enabled = b;
+                                }
+                            }
+                            "accelerator" => {
+                                if let BorrowedAttributeValue::Text(s) = value {
+                                    *accelerator = Some(s.parse().unwrap());
+                                }
+                            }
+                            _ => todo!()
+                        }
+                       
                     }
                 }
                 _ => {}
@@ -164,8 +220,10 @@ impl Menu {
                 for child_id in children {
                     let child = &self.elements[child_id];
                     match child {
-                        MenuElement::Item { text } => {
-                            let item = MenuItemBuilder::new().text(text).build();
+                        MenuElement::Item { text, accelerator,enabled } => {
+                            let item = MenuItemBuilder::new().text(text).enabled(*enabled).build();
+                            item.set_accelerator(accelerator.clone()).unwrap();
+
                             menu.append(&item).unwrap();
                         }
                         MenuElement::Root { children: _ } => todo!(),
@@ -208,6 +266,9 @@ pub mod dioxus_elements {
 
         #[allow(non_upper_case_globals)]
         pub const accelerator: AttributeDiscription = ("accelerator", None, false);
+
+        #[allow(non_upper_case_globals)]
+        pub const enabled: AttributeDiscription = ("enabled", None, false);
     }
 }
 
